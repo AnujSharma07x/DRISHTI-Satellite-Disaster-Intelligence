@@ -1,0 +1,8 @@
+# digital_twin module dependencies (Engineer 3)
+# Subset of the project-wide requirements.txt relevant to this module.
+numpy>=1.26
+rasterio>=1.3
+shapely>=2.0
+pyproj>=3.6
+psycopg2-binary>=2.9   # only needed for impact.py DB access / example_scenario.py --with-db
+pytest>=8.0             # for tests/ — DB-free tests run without psycopg2/a live database
