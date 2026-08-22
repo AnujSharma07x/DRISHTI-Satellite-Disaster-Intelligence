@@ -1,0 +1,17 @@
+# DRISHTI routing/ module (Engineer 4) - Python dependencies
+# Install with: pip install -r requirements.txt --break-system-packages
+#
+# These should also be merged into the project's root requirements.txt by
+# Engineer 1 alongside the other engineers' dependencies - see
+# ARCHITECTURE.md Section 7 (Technology Stack).
+
+networkx>=3.0
+
+# Optional - only required for build_road_graph() (live OSM download via
+# Overpass API), find_accessible_route()/build_response_plan() lat/lon
+# node-snapping, and the flood-geometry intersection helpers in graph.py.
+# The pure-graph algorithm code (apply_flood_penalty, select_best_facility,
+# ensure_graph_crs_4326) and tests/test_routing.py run with just networkx
+# installed - see routing/README.md "Dependency layering".
+osmnx>=1.9
+shapely>=2.0
