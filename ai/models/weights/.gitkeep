@@ -1,0 +1,5 @@
+# Trained model weights (e.g. light_unet.pt) go here.
+# Not committed by default - large binary weights should follow the same
+# rule as satellite rasters (ARCHITECTURE.md #7): keep them out of git,
+# store in Supabase Storage or a release artifact, and download to this
+# folder at runtime/deploy time if/when a trained LightUNet is available.

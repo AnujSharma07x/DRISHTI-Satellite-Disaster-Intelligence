@@ -1,0 +1,9 @@
+{
+  "is_calibrated_probability": false,
+  "valid_pixels": 37000,
+  "total_pixels": 40000,
+  "flooded_pixels": 6890,
+  "drop_threshold_db": 3.0,
+  "probability_threshold": 0.5,
+  "demo_mode": true
+}
