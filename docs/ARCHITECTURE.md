@@ -1,4 +1,24 @@
+# DRISHTI — System Architecture (Phase 1, Locked)
 
+## 1. Project Overview
+
+DRISHTI is an AI-powered disaster-management decision-support platform built for
+Smart India Hackathon 2026 (Problem Statement 26206 — Student Innovation,
+Theme: Disaster Management, Category: Software). It converts satellite imagery and
+geospatial data into actionable flood-management intelligence: identifying risk
+before a disaster, assessing impact during one, simulating "what-if" flood-level
+scenarios, and supporting prioritized emergency response. The MVP scope is a single
+flood-prone Indian region and flood disasters only — see §2 (below) and §8 for
+what is explicitly out of scope.
+
+This document, together with `DATABASE_SCHEMA.md`, `API_CONTRACT.md`, and
+`DATA_FORMATS.md`, is the locked Phase 1 source of truth. Do not redesign any of
+the four without a genuine integration requirement, team sign-off, and a
+synchronized update across all four files.
+
+## 2. MVP Scope
+
+### MUST HAVE
 - Region selection (one flood-prone Indian region, seeded)
 - Flood polygon input → stored in PostGIS (`flood_predictions`)
 - Digital Twin read layer (region, roads, population zones, critical infrastructure,
