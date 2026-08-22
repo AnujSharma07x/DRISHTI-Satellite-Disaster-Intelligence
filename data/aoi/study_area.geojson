@@ -1,0 +1,27 @@
+﻿{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "PLACEHOLDER_STUDY_AREA",
+        "status": "PLACEHOLDER — NOT the official DRISHTI study area",
+        "note": "This is a minimal, clearly-marked placeholder geometry created as part of the data/ directory scaffolding task. No real study-area boundary has been finalized yet. Replace this file with the actual region boundary once a team decision has been made (see docs/ARCHITECTURE.md section 9 and section 2 - 'One region is seeded manually for the MVP demo').",
+        "crs": "EPSG:4326",
+        "coordinate_order": "[longitude, latitude]"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [0.0, 0.0],
+            [0.01, 0.0],
+            [0.01, 0.01],
+            [0.0, 0.01],
+            [0.0, 0.0]
+          ]
+        ]
+      }
+    }
+  ]
+}
