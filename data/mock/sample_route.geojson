@@ -1,0 +1,22 @@
+{
+  "type": "Feature",
+  "crs": { "type": "name", "properties": { "name": "EPSG:4326" } },
+  "properties": {
+    "event_id": "demo-flood-001",
+    "route_id": "route-001",
+    "status": "SAFE",
+    "distance_km": 8.4,
+    "blocked_segments": 2,
+    "source": "mock"
+  },
+  "geometry": {
+    "type": "LineString",
+    "coordinates": [
+      [92.30, 26.20],
+      [92.32, 26.24],
+      [92.34, 26.28],
+      [92.35, 26.32],
+      [92.35, 26.35]
+    ]
+  }
+}

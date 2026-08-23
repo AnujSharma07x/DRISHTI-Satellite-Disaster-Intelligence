@@ -1,0 +1,11 @@
+{
+  "event_id": "demo-flood-001",
+  "flood_area_km2": 42.3,
+  "confidence": 0.91,
+  "model_version": "demo-unet-v1",
+  "satellite": "Sentinel-1",
+  "pre_flood_date": "2026-06-01",
+  "post_flood_date": "2026-06-05",
+  "source": "mock",
+  "_note": "Development data only. confidence/flood_area_km2 are placeholders for integration testing, not scientifically validated values."
+}

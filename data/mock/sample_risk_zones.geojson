@@ -1,0 +1,75 @@
+{
+  "type": "FeatureCollection",
+  "crs": { "type": "name", "properties": { "name": "EPSG:4326" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "event_id": "demo-flood-001",
+        "zone_id": "zone-001",
+        "risk_score": 87,
+        "risk_level": "CRITICAL",
+        "primary_reason": "High population exposure",
+        "source": "mock"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [92.24, 26.24],
+            [92.29, 26.24],
+            [92.29, 26.28],
+            [92.24, 26.28],
+            [92.24, 26.24]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "event_id": "demo-flood-001",
+        "zone_id": "zone-002",
+        "risk_score": 55,
+        "risk_level": "MEDIUM",
+        "primary_reason": "Moderate infrastructure exposure",
+        "source": "mock"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [92.36, 26.32],
+            [92.41, 26.32],
+            [92.41, 26.36],
+            [92.36, 26.36],
+            [92.36, 26.32]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "event_id": "demo-flood-001",
+        "zone_id": "zone-003",
+        "risk_score": 22,
+        "risk_level": "LOW",
+        "primary_reason": "Low elevation impact",
+        "source": "mock"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [92.30, 26.36],
+            [92.35, 26.36],
+            [92.35, 26.39],
+            [92.30, 26.39],
+            [92.30, 26.36]
+          ]
+        ]
+      }
+    }
+  ]
+}

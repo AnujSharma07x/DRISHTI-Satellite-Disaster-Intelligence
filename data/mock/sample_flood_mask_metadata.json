@@ -1,0 +1,13 @@
+{
+  "event_id": "demo-flood-001",
+  "file_name": "flood_mask.tif",
+  "format": "GeoTIFF",
+  "crs": "EPSG:4326",
+  "data_type": "uint8",
+  "values": {
+    "0": "not_flooded",
+    "1": "flooded"
+  },
+  "storage_path": "flood-events/demo-flood-001/flood_mask.tif",
+  "source": "mock"
+}

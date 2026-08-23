@@ -1,0 +1,9 @@
+{
+  "event_id": "demo-flood-001",
+  "estimated_population_affected": 12500,
+  "buildings_affected": 3200,
+  "roads_affected_km": 18.4,
+  "critical_infrastructure_affected": 4,
+  "hospitals_affected": 1,
+  "source": "mock"
+}

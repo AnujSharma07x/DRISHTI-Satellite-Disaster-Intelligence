@@ -1,0 +1,37 @@
+{
+  "type": "FeatureCollection",
+  "crs": { "type": "name", "properties": { "name": "EPSG:4326" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "event_id": "demo-flood-001",
+        "source": "mock"
+      },
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [
+          [
+            [
+              [92.24, 26.24],
+              [92.32, 26.24],
+              [92.32, 26.29],
+              [92.27, 26.31],
+              [92.24, 26.29],
+              [92.24, 26.24]
+            ]
+          ],
+          [
+            [
+              [92.36, 26.32],
+              [92.41, 26.32],
+              [92.41, 26.36],
+              [92.36, 26.36],
+              [92.36, 26.32]
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

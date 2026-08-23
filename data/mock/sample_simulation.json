@@ -1,0 +1,27 @@
+{
+  "event_id": "demo-flood-001",
+  "scenarios": [
+    {
+      "scenario_id": "scenario-2.5m",
+      "flood_level_m": 2.5,
+      "estimated_population_affected": 9000,
+      "buildings_affected": 2100,
+      "roads_affected_km": 12.1
+    },
+    {
+      "scenario_id": "scenario-3.0m",
+      "flood_level_m": 3.0,
+      "estimated_population_affected": 12500,
+      "buildings_affected": 3200,
+      "roads_affected_km": 18.4
+    },
+    {
+      "scenario_id": "scenario-3.5m",
+      "flood_level_m": 3.5,
+      "estimated_population_affected": 18000,
+      "buildings_affected": 4600,
+      "roads_affected_km": 25.2
+    }
+  ],
+  "source": "mock"
+}
