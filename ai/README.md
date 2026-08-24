@@ -1,356 +1,179 @@
-# DRISHTI — AI Flood Detection Module (Engineer 2)
+# DRISHTI — AI Training Module (`ai/training/`)
 
-Owns exactly this slice of the DRISHTI pipeline (`docs/ARCHITECTURE.md` §3):
+Extends the existing, unmodified `ai/` inference pipeline with a training path
+for `ai/models/unet.py::LightUNet`. Does not replace or duplicate anything —
+see `ai/README.md` for the pipeline this plugs into.
+
+---
+
+## 1. Dataset selected: Sen1Floods11
+
+**Sen1Floods11** (Cloud to Street / Google, CC BY 4.0) — the standard public
+labelled Sentinel-1 flood-segmentation dataset:
+[github.com/cloudtostreet/Sen1Floods11](https://github.com/cloudtostreet/Sen1Floods11).
+
+- **HandLabeled subset**: 446 chips, 512x512, 10 m, EPSG:4326, from 11 real
+  flood events worldwide.
+- Per chip: `<chip>_S1Hand.tif` (Sentinel-1 GRD, VV+VH, already calibrated to
+  dB) and `<chip>_LabelHand.tif` (hand-labeled water mask: `-1`=no data,
+  `0`=dry, `1`=water).
+- Ships official `flood_train_data.csv` / `flood_valid_data.csv` /
+  `flood_test_data.csv` split lists — used automatically via `--splits-dir`
+  so results stay comparable to the published baseline.
+
+**Why this dataset is compatible with `LightUNet`, with one honest caveat:**
+`LightUNet.__init__` takes `in_channels=2`. Sen1Floods11's HandLabeled subset
+does **not** provide a genuine second (pre-flood) acquisition of the same
+chip — only one S1 scene near the flood event, plus its label. There is no
+real temporal pair to feed the model. Per the explicit instruction *"Do NOT
+fabricate a second channel if the dataset does not contain a meaningful
+temporal pair,"* this module does **not** duplicate the single image or
+invent a synthetic pre-flood scene. Instead it uses the two channels the
+dataset actually and genuinely provides for every chip — **VV and VH**
+polarization — which is a real 2-channel input, matches `in_channels=2`
+with zero architecture changes, and is a standard input choice in SAR
+flood-mapping literature for single-scene segmentation.
+
+**Consequence, stated plainly:** a `LightUNet` trained by this module is a
+**single-scene VV/VH flood segmenter**, not a bi-temporal change detector.
+The existing `ThresholdFloodModel` bi-temporal baseline is **not** replaced
+and remains the pipeline's change-detection path (Phase 6 / "KEEP the
+existing SAR threshold/change-detection method"). If a genuine pre/post
+labelled dataset becomes available later, `dataset.py`'s loader can be
+swapped without touching `train.py`'s loop, `losses.py`, `metrics.py`, or
+anything in `ai/models/`, `ai/inference/`, or `ai/utils/`.
+
+## 2. Files added
 
 ```
-Satellite data
-      ↓
-Preprocessing
-      ↓
-AI flood detection
-      ↓
-Flood mask
-      ↓
-Flood polygon
-      ↓
-Flood statistics
+ai/training/
+├── dataset.py     Sen1Floods11 chip discovery, patching, NoData handling,
+│                  train/val/test split (official CSVs or deterministic
+│                  chip-level random fallback)
+├── losses.py      Masked BCE + Dice loss (invalid pixels never contribute)
+├── metrics.py     Shared IoU / Dice / precision / recall accumulator
+├── train.py       CLI training loop -> checkpoint (plain state_dict,
+│                  loadable by the EXISTING ai.models.unet.load_model())
+└── evaluate.py    CLI test-set metrics report for a trained checkpoint
+
+ai/download/
+└── sentinel1.py   Small ASF-based Sentinel-1 acquisition utility for the
+                   Assam demo AOI (Phase 4/5) — search + fetch-pair
+
+ai/tests/test_training.py   Synthetic, dependency-free-of-pytest smoke
+                             tests (see §4)
 ```
 
-This module **does not** touch React, FastAPI routing, the database schema,
-routing/emergency response, or the risk engine — see "Do not work on" below.
+Nothing in `ai/models/unet.py`, `ai/inference/predict.py`,
+`ai/preprocessing/`, `ai/utils/`, or `ai/run_pipeline.py` was modified.
 
----
-
-## 1. Status at a glance
-
-| Piece | Status |
-|---|---|
-| SAR preprocessing (calibration, despeckle, joint normalization) | ✅ Working |
-| Input validation (shape/CRS/transform alignment) | ✅ Working |
-| NoData handling | ✅ Working |
-| **`ThresholdFloodModel`** (SAR dB change-detection baseline) | ✅ Working — **this is the reliable MVP path, used by default** |
-| **`LightUNet`** (trainable PyTorch U-Net) | ⚠️ Implemented, **ships untrained**. Do not use for real predictions until trained — see §4. |
-| Flood mask → GeoJSON polygon, area (km²) | ✅ Working |
-| Supabase Storage upload (mask raster) | ✅ Working, optional, env-var gated |
-| `flood_predictions` payload contract | ✅ Working, schema-validated |
-
----
-
-## 2. What this module produces
-
-Given a pre-flood and post-flood Sentinel-1 SAR image pair, running the
-pipeline produces **three output files** plus a console summary:
-
-1. **`flood_prediction.json`** — a dict matching the `flood_predictions`
-   table contract **exactly** (`docs/DATABASE_SCHEMA.md` §3,
-   `docs/API_CONTRACT.md`) — nothing more, nothing less, so Engineer 1 can
-   insert it directly:
-
-   ```json
-   {
-     "region_id": "uuid-or-slug",
-     "flood_event_id": null,
-     "satellite_observation_id": null,
-     "model_version": "sar_change_threshold_baseline_v1",
-     "confidence": 0.9953,
-     "flood_area": 0.6895,
-     "mask_storage_path": null,
-     "geometry": { "type": "MultiPolygon", "coordinates": [ ... ] },
-     "status": "completed"
-   }
-   ```
-
-2. **`flood_polygon.geojson`** — the flood polygon alone, as a standalone
-   GeoJSON file (same geometry as above).
-
-3. **`inference_metadata.json`** — diagnostic info that is **deliberately
-   kept out of `flood_prediction.json`** so the DB-contract file never grows
-   extra columns Engineer 1 didn't define: whether the confidence value is a
-   calibrated probability or a heuristic proxy, valid/invalid pixel counts,
-   the threshold(s) used, and whether the run was `--demo`.
-
-- `geometry` is always `EPSG:4326` (`docs/DATA_FORMATS.md` §1), always a
-  `MultiPolygon` (never a bare `Polygon`), and `null` only when zero flooded
-  pixels were detected.
-- `flood_area` is always **km²**, computed via a temporary equal-area
-  reprojection — never from raw lat/lon degree math.
-- `confidence` is always a float in `[0.0, 1.0]` — see §5 for what it
-  actually means for each model.
-- `status` is one of `processing | completed | failed`.
-- `id` and `created_at` are intentionally omitted — the database assigns
-  those.
-
-This module **does not insert into Supabase itself**. It hands Engineer 1 a
-contract-compliant payload to insert, or to expose through a thin FastAPI
-endpoint that calls into `ai/`.
-
----
-
-## 3. Quick start
+## 3. Commands, in order
 
 ```bash
-cd ai
-pip install -r requirements.txt --break-system-packages
+# 1. Install (adds asf_search as an optional extra; torch/rasterio/etc.
+#    already required by the base pipeline — see ../requirements.txt)
+pip install -r ai/requirements.txt --break-system-packages
 
-# Demo mode — SYNTHETIC data only (clearly labelled in the logs). Generates
-# a pre/post SAR pair over a sample flood-prone Odisha region, including a
-# NoData strip, so the demo exercises NoData handling too.
-python run_pipeline.py --demo --region-id demo-region-001 --out ./sample_output
+# 2. Get Sen1Floods11 HandLabeled + its official splits (see the dataset's
+#    own repo/GCS bucket for current access instructions — not mirrored
+#    here, per "do NOT commit huge satellite datasets")
+#    Expected local layout:
+#      <data_root>/<chip>_S1Hand.tif
+#      <data_root>/<chip>_LabelHand.tif
+#      <splits_dir>/flood_train_data.csv
+#      <splits_dir>/flood_valid_data.csv
+#      <splits_dir>/flood_test_data.csv
 
-# Equivalently, as a module:
-python -m ai.run_pipeline --demo --out ./sample_output
+# 3. Train
+python -m ai.training.train \
+    --data-root  /path/to/sen1floods11/HandLabeled \
+    --splits-dir /path/to/sen1floods11/splits/flood_handlabeled \
+    --epochs 30 --batch-size 8 \
+    --out ai/models/weights
 
-# Real data
+# 4. Evaluate on the held-out test split
+python -m ai.training.evaluate \
+    --data-root  /path/to/sen1floods11/HandLabeled \
+    --splits-dir /path/to/sen1floods11/splits/flood_handlabeled \
+    --weights ai/models/weights/light_unet.pt
+
+# 5. (Separate machine with internet + Earthdata credentials — see
+#    ai/download/sentinel1.py docstring; ASF endpoints are not reachable
+#    from this sandboxed dev environment)
+export EARTHDATA_USERNAME=... EARTHDATA_PASSWORD=...
+python -m ai.download.sentinel1 fetch-pair \
+    --pre-date 2026-06-01 --post-date 2026-06-05 \
+    --out data/satellite/raw
+
+# 6. Run the EXISTING, unmodified inference entrypoint with the trained
+#    checkpoint — Method A. Omit --weights to use Method B
+#    (ThresholdFloodModel baseline) instead; both remain available.
 python -m ai.run_pipeline \
-    --pre  /path/to/pre_flood.tif \
-    --post /path/to/post_flood.tif \
-    --region-id <uuid-from-regions-table> \
-    --out ./output \
-    [--drop-threshold-db 3.0] \
-    [--weights models/weights/light_unet.pt] \
-    [--upload]
+    --pre  data/satellite/raw/pre_flood/... \
+    --post data/satellite/raw/post_flood/... \
+    --region-id <uuid> --weights ai/models/weights/light_unet.pt \
+    --out ./output
 ```
 
-The CLI reports, for every run: preprocessing status (valid vs. NoData pixel
-counts), the detection method used, flooded pixel count, flood area,
-confidence (labelled as calibrated or heuristic), and the paths to all three
-output files. Errors (missing file, misaligned raster pair, etc.) are
-reported clearly and the process exits non-zero.
+⚠️ Step 6 caveat: `run_pipeline.py`'s `--pre`/`--post` path feeds
+`pre_norm`/`post_norm` from a genuine bi-temporal pair into the LightUNet
+input slots. A checkpoint trained per §1 was trained on VV/VH from a single
+acquisition, not a temporal pair — the two channels are architecturally
+identical (2 x float32 in [0,1]) so nothing crashes, but semantically the
+model expects VV/VH, not pre/post. For a real Assam demo, either (a) feed
+same-date VV/VH bands into the `--pre`/`--post` slots instead of a temporal
+pair, or (b) use `ThresholdFloodModel` (no `--weights`) for genuine
+bi-temporal change detection, which remains the recommended default per
+Phase 6. This mismatch is a direct, documented consequence of the dataset
+limitation in §1, not a bug in `run_pipeline.py`.
 
-`sample_output/` in this directory holds real output from a `--demo` run —
-not a hand-written example.
-
----
-
-## 4. The AI model — and an explicit assumption
-
-The master prompt allows: *"If a full training pipeline is too expensive for
-the 10-day timeline, create a clean inference pipeline using a suitable
-pretrained/trained model or a small demonstrable model."* It also requires:
-*"Do NOT pretend that an untrained U-Net is a trained AI model."*
-
-**Assumption made here (flagged explicitly, not silently decided):** no
-labelled Sentinel-1 flood dataset or trained weights were available within
-this task's scope, so **no training was performed.** Two models are shipped:
-
-1. **`ThresholdFloodModel`** (`models/unet.py`) — the MVP's **reliable
-   default**. A zero-training SAR change-detection heuristic:
-
-   ```
-   change_db = pre_db - post_db      (positive => backscatter dropped)
-   ```
-
-   computed directly on calibrated dB values (not on independently
-   normalized [0,1] arrays — see §7 for why that distinction matters). A
-   pixel is flagged flooded when the drop exceeds a configurable threshold
-   (`--drop-threshold-db`, default **3.0 dB**). This default sits inside the
-   ~3–10 dB open-water backscatter drop range reported in SAR flood-mapping
-   literature (e.g. Twele et al. 2016) but **is not tuned/validated against
-   ground truth for this project** — treat it as a reasonable starting
-   point, not a calibrated value.
-
-2. **`LightUNet`** (`models/unet.py`) — a small, trainable U-Net (4
-   encoder/decoder levels, base width 16). **It ships with random,
-   untrained weights.** To make this impossible to miss or misuse:
-   - Every `LightUNet` instance has a `.trained` flag, `False` by default.
-   - `load_model(weights_path=...)` only sets `.trained = True` after
-     successfully loading a real weights file; without `--weights`, the CLI
-     never touches `LightUNet` at all — it uses `ThresholdFloodModel`.
-   - If `run_inference()` ever receives an untrained `LightUNet` (e.g. via
-     direct Python use, bypassing `load_model`), it logs an explicit
-     warning and labels the output `model_version: "light_unet_v1_UNTRAINED"`
-     with `is_calibrated_probability: false` in the metadata sidecar — it
-     is structurally impossible for untrained-model output to look
-     identical to a trained result.
-
-`inference/predict.py` is model-agnostic — swapping in a trained LightUNet
-later requires no changes to preprocessing, validation, geometry conversion,
-or the output contract.
-
----
-
-## 5. Confidence semantics (Step 7)
-
-| Model | `confidence` meaning | `is_calibrated_probability` |
-|---|---|---|
-| `ThresholdFloodModel` | Mean value of a **logistic proxy** centered on `drop_threshold_db` — monotonic in the dB drop, bounded to [0,1], **not** a statistically calibrated probability | `false` |
-| `LightUNet` (trained) | Mean sigmoid output of the network over flooded pixels — a genuine model probability, calibrated only to the extent the training process calibrated it | `true` |
-| `LightUNet` (untrained) | Meaningless — random-weight sigmoid output | `false`, and the model_version is suffixed `_UNTRAINED` |
-
----
-
-## 6. Input validation & NoData handling (Steps 4–5)
-
-**Validation** (`preprocessing/sar_preprocessing.py::validate_raster_pair`):
-same array shape is **not** treated as proof of alignment. Before any
-pixel-wise comparison, the pipeline checks CRS equality, affine-transform
-equality (origin + pixel size + rotation, within floating-point tolerance),
-and shape — and raises a specific, actionable `ValueError` naming exactly
-which check failed rather than silently proceeding or silently resampling.
-
-**NoData** (`preprocessing/sar_preprocessing.py`): each raster's NoData
-value (or NaN/inf) is turned into a `valid_mask`. A pixel is only usable for
-change detection if it's valid in **both** the pre- and post-flood image.
-`valid_mask` is threaded through every stage:
-- excluded from despeckle-filter local statistics and from the joint
-  normalization min/max,
-- forced to probability 0 in `inference/predict.py` (can never be
-  classified as flooded),
-- excluded from vectorization in `geo_utils.py::mask_to_geometry` (defence
-  in depth, even though inference already zeroes them),
-- therefore excluded from `flood_area_km2` too, since area comes from the
-  vectorized geometry.
-
-## 7. Normalization — the bug this revision fixes
-
-An earlier version of this module normalized the pre- and post-flood dB
-bands **independently** (each min-max scaled to its own [0,1] range) before
-differencing them for the threshold baseline. That destroys the very signal
-change-detection depends on: two images stretched to fill [0,1]
-*independently* no longer preserve their real relative backscatter levels,
-so a genuine flood-driven drop can be partially or fully cancelled out.
-
-Fixed by splitting normalization into two clearly separate paths:
-- **`ThresholdFloodModel`** now differences the **raw calibrated dB values**
-  directly (`pre_db - post_db`) — physically meaningful, no normalization
-  involved.
-- **`LightUNet`** (which does benefit from normalized input) uses
-  **`normalize_pair()`**, which computes ONE shared min/max across both
-  images' valid pixels and applies the same scaling to both — preserving
-  their relative relationship, unlike independent per-image normalization.
-
----
-
-## 8. Module layout
-
-```
-ai/
-├── preprocessing/
-│   └── sar_preprocessing.py   Load+validate+calibrate+despeckle+joint-normalize
-├── models/
-│   ├── unet.py                 LightUNet (untrained) + ThresholdFloodModel (baseline)
-│   └── weights/                Trained weights go here (not bundled — see §4)
-├── inference/
-│   └── predict.py              Model-agnostic inference → mask + confidence, NoData-aware
-├── utils/
-│   ├── geo_utils.py            Mask → EPSG:4326 MultiPolygon, area (km²)
-│   ├── schema.py                Builds/validates the flood_predictions-shaped payload
-│   └── storage_utils.py        Optional Supabase Storage upload for the mask raster
-├── tests/
-│   └── test_pipeline.py        Lightweight regression checks (no pytest dependency) — run directly
-├── run_pipeline.py             CLI entrypoint — runs everything end-to-end
-├── requirements.txt
-└── sample_output/
-    ├── flood_prediction.json     Example flood_predictions-contract output
-    ├── flood_polygon.geojson     Example standalone polygon
-    └── inference_metadata.json   Example diagnostic sidecar
-```
-
----
-
-## 9. CRS / units — how this module follows `DATA_FORMATS.md`
-
-| Stage | CRS / unit | Where |
-|---|---|---|
-| Raw/preprocessed SAR raster | native or projected (e.g. UTM), **transient only** | `preprocessing/` |
-| Vectorized mask (mid-pipeline) | source raster CRS, **transient only** | `utils/geo_utils.py::mask_to_geometry` (before reprojection) |
-| Final geometry (what leaves this module) | **EPSG:4326**, always | `utils/geo_utils.py::mask_to_geometry` (after `.to_crs("EPSG:4326")`) |
-| Area calculation | temporarily reprojected to an equal-area CRS (`EPSG:6933`), **never persisted** in that CRS | `utils/geo_utils.py::calculate_area_km2` |
-
----
-
-## 10. Data storage principle
-
-- This module never treats local disk as a database. `--out` is scratch
-  space for a single run.
-- Large binaries (the mask raster) belong in Supabase Storage's
-  `flood-masks/` bucket, not in Postgres — `utils/storage_utils.py` uploads
-  there when `--upload` is passed and `SUPABASE_URL` /
-  `SUPABASE_SERVICE_ROLE_KEY` are set as environment variables (never
-  hardcoded, never committed). Pass `--delete-local-mask-after-upload` to
-  remove the local copy once the upload is confirmed, avoiding duplicate
-  persistence.
-- If Supabase isn't configured, the pipeline still completes successfully
-  and just leaves `mask_storage_path: null`.
-
----
-
-## 11. CLI reference
-
-```
-python -m ai.run_pipeline
-  --pre PATH                       Pre-flood SAR GeoTIFF
-  --post PATH                      Post-flood SAR GeoTIFF
-  --region-id ID                   regions.id this prediction belongs to
-  --flood-event-id ID              Optional flood_events.id
-  --satellite-observation-id ID    Optional satellite_observations.id
-  --weights PATH                   Trained LightUNet weights (.pt); omit to use the baseline
-  --drop-threshold-db FLOAT        ThresholdFloodModel dB threshold (default 3.0)
-  --threshold FLOAT                Probability/proxy cutoff for the binary mask (default 0.5)
-  --min-region-pixels INT          Drop vectorized flood regions smaller than this (noise filtering)
-  --out DIR                        Output directory (alias: --output-dir)
-  --upload                         Upload mask raster to Supabase Storage
-  --delete-local-mask-after-upload Delete local mask once upload is confirmed
-  --demo                           Use synthetic SAR data instead of --pre/--post
-```
-
----
-
-## 12. Testing (Step 16)
+## 4. Testing
 
 ```bash
-python ai/tests/test_pipeline.py
+python ai/tests/test_training.py
 ```
 
-Covers: missing-file input, mismatched raster pairs (both shape+origin and
-CRS mismatches), NoData exclusion from stats and classification, end-to-end
-mask→GeoJSON→area generation, the empty/no-flood case, and a check that area
-is computed via equal-area reprojection rather than raw lat/lon degrees. All
-7 checks currently pass. `--demo` mode itself doubles as an end-to-end smoke
-test and is run as part of manual verification before each change lands.
+No real Sen1Floods11 download or network access is available in this
+development environment, so these tests generate small SYNTHETIC chips
+(clearly labelled, same spirit as `run_pipeline.py --demo`) to verify, end
+to end:
 
----
+1. Chip discovery + NoData-aware loading (`dataset.py`)
+2. Patch extraction skips all-nodata patches
+3. `build_datasets()` produces normalized `[0,1]` patches with a correct
+   deterministic split
+4. Masked BCE+Dice loss is provably invariant to invalid-pixel values
+5. IoU/Dice/precision/recall match a hand-computed confusion matrix
+6. A full (tiny) training loop runs and saves a checkpoint
+7. **Integration**: that checkpoint loads via the existing, unmodified
+   `ai.models.unet.load_model()` and runs through the existing, unmodified
+   `ai.inference.predict.run_inference()` — proving new training code
+   produces output the old inference code can actually consume, not just
+   that training "runs".
 
-## 13. Do not work on
+All 8 checks currently pass. A full CLI smoke run (`python -m
+ai.training.train ...` → `python -m ai.training.evaluate ...` → `python -m
+ai.run_pipeline --demo --weights ...`) was also run manually against a
+synthetic mini-dataset and completed without error.
 
-This module intentionally does **not** touch:
-- React / the dashboard
-- FastAPI route definitions or the API contract shape
-- The database schema (`flood_predictions` and all other tables are owned
-  by Engineer 1 — this module only produces payloads matching the existing,
-  locked contract, and deliberately keeps extra diagnostic fields in a
-  separate sidecar file rather than adding columns to that payload)
-- Emergency routing / the risk engine (Engineer 4)
-- Any Supabase `INSERT`/`UPDATE` — uploading the *raster* to Storage is the
-  one exception, and even that is optional and gated
+## 5. Known limitations / blockers
 
----
-
-## 14. Known limitations
-
-- `ThresholdFloodModel`'s dB threshold is a documented, literature-informed
-  default — **not validated against ground truth** for this specific
-  region/dataset. Treat detected flood extent as indicative, not
-  survey-grade.
-- `LightUNet` ships **untrained** and is guarded against accidental misuse
-  (see §4) — do not use it for real predictions until trained on labelled
-  data.
-- No automated pre/post image co-registration or resampling — mismatched
-  grids are rejected with a clear error rather than silently fixed; the
-  pair must already share CRS, resolution, and origin.
-- No full hydrodynamic modelling, no multi-temporal (>2 image) time series
-  — matches the project's explicit "Future Extensions (out of scope for
-  Phase 1)" list in `docs/ARCHITECTURE.md`.
-- Sentinel-1 inputs are assumed to already be analysis-ready GRD (calibrated
-  to sigma-nought, terrain-corrected/geocoded) — this module does not
-  implement orbit-file application, thermal-noise removal, or range-Doppler
-  terrain correction.
-
-## 15. Future improvements (not started)
-
-- Train `LightUNet` on a labelled Sentinel-1 flood dataset once one is
-  available, and validate the threshold-baseline's dB cutoff against
-  ground-truthed flood extents for the chosen demo region.
-- Optional: report per-flood-region confidence (rather than one scene-wide
-  scalar) if Engineer 4's risk engine would benefit from it — would need
-  coordination since it changes the payload shape.
+- **No real training run performed.** This environment has no access to
+  Sen1Floods11 (needs external download) or ASF/Earthdata (not in the
+  network allowlist), so no real IoU/Dice numbers exist yet — only the
+  synthetic smoke-test numbers in §4, which are not meaningful accuracy
+  figures. Running §3 steps 2–4 on a machine with real data access is the
+  next step before any real metrics can be reported.
+- **VV/VH vs pre/post mismatch** at inference time — see the §3 step 6
+  caveat. Not fabricating a second channel from a single-pair dataset was
+  an explicit constraint; this is the direct, honest consequence.
+- `base_width` for a checkpoint MUST stay at `LightUNet`'s default (16) —
+  `ai.models.unet.load_model()` does not expose a `base_width` override, so
+  a checkpoint trained with any other width cannot be loaded by the
+  existing inference code without also changing `load_model()` (out of
+  scope for this addition — see `train.py --help`).
+- Patch-based training with `random_crops_per_chip` currently redraws the
+  same fixed set of random crops once per dataset build (not re-sampled
+  every epoch) — a simple, working choice; resampling crops per-epoch would
+  be a straightforward future improvement, not implemented here to keep
+  scope tight.
