@@ -173,11 +173,6 @@ class ThresholdFloodModel:
         """
         change_db = pre_db - post_db  # positive where backscatter fell (flood signal)
 
-        # Logistic-shaped scaling around the threshold - smooth, bounded to
-        # [0, 1], and monotonic in change_db. A steepness of 1.0 dB^-1 means
-        # the proxy moves from ~0.27 to ~0.73 across a +/-2 dB band around
-        # the threshold, which is a reasonable soft margin for the ~1 dB
-        # scale of residual speckle noise left after despeckling.
         steepness = 1.0
         proxy = 1.0 / (1.0 + np.exp(-steepness * (change_db - self.drop_threshold_db)))
 
@@ -198,10 +193,49 @@ def load_model(
       trained LightUNet.
     - Otherwise: falls back to the no-training ThresholdFloodModel so the
       pipeline always runs end-to-end.
+
+    `weights_path` may point at either:
+      - a full training checkpoint dict (as saved by `ai/training/train.py`),
+        containing "model_state_dict" plus metadata such as
+        "input_channels"/"base_width"/"normalization_stats"/etc., or
+      - a raw state_dict (a plain mapping of parameter name -> tensor), e.g.
+        exported/saved some other way.
+    In the first case, the architecture (`in_channels`, `base_width`) is
+    reconstructed from the checkpoint's own recorded values when present, so
+    it always matches what was actually trained - the caller-supplied
+    `in_channels` argument is only used as a fallback when the checkpoint
+    doesn't record it (e.g. a bare state_dict).
     """
     if weights_path and os.path.exists(weights_path) and _TORCH_AVAILABLE:
-        model = LightUNet(in_channels=in_channels)
-        state_dict = torch.load(weights_path, map_location=device)
+        checkpoint = torch.load(weights_path, map_location=device, weights_only=False)
+
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
+            ckpt_in_channels = checkpoint.get("input_channels", in_channels)
+            ckpt_base_width = checkpoint.get("base_width", 16)
+            logger.info(
+                "Loading full training checkpoint from %s "
+                "(model_version=%s, epoch=%s, input_channels=%s, base_width=%s)",
+                weights_path,
+                checkpoint.get("model_version"),
+                checkpoint.get("epoch"),
+                ckpt_in_channels,
+                ckpt_base_width,
+            )
+        else:
+            # Raw state_dict - no architecture metadata available, fall back
+            # to the caller-supplied in_channels and the LightUNet default
+            # base_width.
+            state_dict = checkpoint
+            ckpt_in_channels = in_channels
+            ckpt_base_width = 16
+            logger.info(
+                "Loading raw state_dict from %s (no checkpoint metadata "
+                "found - assuming in_channels=%d, base_width=%d)",
+                weights_path, ckpt_in_channels, ckpt_base_width,
+            )
+
+        model = LightUNet(in_channels=ckpt_in_channels, base_width=ckpt_base_width)
         model.load_state_dict(state_dict)
         model.eval()
         model.trained = True

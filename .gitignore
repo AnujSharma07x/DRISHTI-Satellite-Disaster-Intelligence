@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Generated AI outputs
+ai/demo_output/
+ai/real_demo_output/
+
+# Model weights
+ai/weights/
+
+# Dataset
+data/sen1floods11/
+
+# Temporary/generated files
+*.tmp
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
