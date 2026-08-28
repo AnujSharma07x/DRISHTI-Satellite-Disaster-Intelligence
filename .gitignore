@@ -30,3 +30,6 @@ Thumbs.db
 .vscode/
 # Local cache
 cache/
+
+# Generated road exports
+data/roads/*.geojson
